@@ -4,7 +4,7 @@ import './App.css';
 
 import noise_image from './noise.png';
 import * as twgl from "twgl"
-import video_source from "./intros2.webm"
+import video_source from "./vhsintros.mp4"
 
 class GLRenderer extends React.Component {
   constructor(props) {
