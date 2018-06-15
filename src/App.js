@@ -4,6 +4,7 @@ import './App.css';
 
 import noise_image from './noise.png';
 import * as twgl from "twgl"
+import video_source from "./intros2.webm"
 
 class GLRenderer extends React.Component {
   constructor(props) {
@@ -70,17 +71,19 @@ class Simulation extends GLRenderer {
       precision highp float;
       #define texture texture2D
       
-      uniform float time;
-      uniform vec2 resolution;
+      uniform float iTime;
+      uniform vec2 iResolution;
       uniform sampler2D noise_tex;
+      uniform sampler2D video_tex;
+      uniform sampler2D fft_tex;
+      uniform vec3 iMouse;
     `
 
     this.simulationProgram = twgl.createProgramInfo(gl, [
       vertex_program,
       program_header + `
-        uniform sampler2D self;
-        uniform int frame;
-        uniform vec3 mouse;
+        uniform sampler2D iChannel0;
+        uniform int iFrame;
 
       ` + this.props.simulation
     ])
@@ -88,7 +91,7 @@ class Simulation extends GLRenderer {
     this.shadeProgram = twgl.createProgramInfo(gl, [
       vertex_program,
       program_header + `
-        uniform sampler2D self;
+        uniform sampler2D iChannel0;
 
       ` + this.props.shade
     ])
@@ -97,7 +100,106 @@ class Simulation extends GLRenderer {
       src: noise_image,
     })
 
+    this.uniforms = {}
 
+    this.SetupMouse(gl)
+
+    let context = new AudioContext()
+    
+    let analyser = context.createAnalyser()
+    //analyser.minDecibels = -90;
+    //analyser.maxDecibels = -10;
+    analyser.smoothingTimeConstant = 1.0;
+    analyser.fftSize =2048
+
+    var bufferLength = analyser.frequencyBinCount
+    this.fftArray = new Uint8Array(bufferLength)
+
+    this.fft_texture = twgl.createTexture(gl, {
+      min: gl.LINEAR,
+      wrap: gl.REPEAT,
+    })
+    
+    this.audioAnalyser = analyser
+
+    let self = this;
+
+    function setupVideo(url) {
+      const video = document.createElement('video')
+
+      document.body.appendChild(video)
+
+     let source = context.createMediaElementSource(video);
+
+      source.connect(analyser)
+      analyser.connect(context.destination)
+      
+
+      var playing = false;
+      var timeupdate = false;
+    
+      video.autoplay = true;
+      video.muted = false;
+      video.loop = true;
+    
+      // Waiting for these 2 events ensures
+      // there is data in the video
+    
+      video.addEventListener('playing', function() {
+         playing = true;
+         checkReady();
+      }, true);
+    
+      video.addEventListener('timeupdate', function() {
+         timeupdate = true;
+         checkReady();
+      }, true);
+    
+      video.src = url;
+      video.play();
+      video.volume = 1;
+          
+      function checkReady() {
+        video.setAttribute("controls", "controls")
+        video.height = 0
+        video.width = document.documentElement.clientWidth
+
+        if (playing && timeupdate) {
+          self.copyVideo = true;
+        }
+      }
+    
+      return video;
+    }
+    
+
+    this.video = setupVideo(video_source);
+    this.video_texture = twgl.createTexture(gl, {
+      min: gl.LINEAR,
+      wrap: gl.REPEAT,
+    })
+  }
+
+  UpdateTexture() {
+    if (!this.copyVideo) return;
+
+    const gl = this.gl
+    const level = 0;
+    const internalFormat = gl.RGBA;
+    const srcFormat = gl.RGBA;
+    const srcType = gl.UNSIGNED_BYTE;
+    gl.bindTexture(gl.TEXTURE_2D, this.video_texture);
+    gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, srcFormat, srcType, this.video);
+  }
+
+  UpdateFFT() {
+    this.audioAnalyser.getByteTimeDomainData(this.fftArray)
+    const gl = this.gl
+    gl.bindTexture(gl.TEXTURE_2D, this.fft_texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, this.fftArray.length, 1, 0, gl.RED, gl.UNSIGNED_BYTE, this.fftArray);
+  }
+
+  SetupMouse(gl) {
     this.mouse_pos = {x: 0, y: 0, z: 0}
 
     function getRelativeMousePosition(event, target) {
@@ -151,7 +253,12 @@ class Simulation extends GLRenderer {
     gl.canvas.addEventListener("touchend", stop_event, false);
     gl.canvas.addEventListener("touchcancel", stop_event, false);
   }
+
+  PreDraw() {}
+
   Draw(gl, time) {
+    this.PreDraw(gl, time)
+
     if (twgl.resizeCanvasToDisplaySize(gl.canvas)) {
       for (let i = 0; i < 2; i++)
       {
@@ -159,25 +266,31 @@ class Simulation extends GLRenderer {
       }
     }
 
+    this.UpdateTexture()
+    this.UpdateFFT()
+
+    let u = this.uniforms
+
+    u.iResolution = [gl.canvas.width, gl.canvas.height]
+    
+    u.iFrame = this.frame
+    u.iMouse = [
+      this.mouse_pos.x, 
+      -this.mouse_pos.y + gl.canvas.height, 
+      this.mouse_pos.z
+    ]
+    u.iTime = time * 0.0015
+    u.noise_tex = this.noise_tex
+    u.video_tex = this.video_texture
+    u.fft_tex = this.fft_texture
+
+    u.iChannel0 = this.buffers[1].attachments[0]
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.buffers[0].framebuffer);
       gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-      const uniforms = {
-        resolution: [gl.canvas.width, gl.canvas.height],
-        self: this.buffers[1].attachments[0],
-        frame: this.frame,
-        mouse: [
-          this.mouse_pos.x, 
-          -this.mouse_pos.y + gl.canvas.height, 
-          this.mouse_pos.z
-        ],
-        time: time * 0.0015,
-        noise_tex: this.noise_tex,
-      };
-
       gl.useProgram(this.simulationProgram.program);
       twgl.setBuffersAndAttributes(gl, this.simulationProgram, this.rectangle);
-      twgl.setUniforms(this.simulationProgram, uniforms);
+      twgl.setUniforms(this.simulationProgram, this.uniforms);
       twgl.drawBufferInfo(gl, this.rectangle);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -186,16 +299,13 @@ class Simulation extends GLRenderer {
 
     this.frame = this.frame + 1
 
+
+    u.iChannel0 = this.buffers[1].attachments[0]
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);   
 
     gl.useProgram(this.shadeProgram.program);
     twgl.setBuffersAndAttributes(gl, this.shadeProgram, this.rectangle);
-    twgl.setUniforms(this.shadeProgram, {
-      self: this.buffers[1].attachments[0],
-      resolution: [gl.canvas.width, gl.canvas.height],
-      time: time,
-      noise_tex: this.noise_tex,
-    });
+    twgl.setUniforms(this.shadeProgram, this.uniforms);
     twgl.drawBufferInfo(gl, this.rectangle);
   }
 }
@@ -208,156 +318,47 @@ class App extends Component {
           width={document.documentElement.clientWidth} 
           height={document.documentElement.clientHeight} 
           simulation={`
-            const float pi = 3.14159265358979323846264338327950288419716939937510582097494459230781640;
-            const float pi2 = pi/2.0;
+            #define FFT(f) texture(fft_tex, vec2(f, 0.0)).x
+            #define PIXEL(x, y) texture(iChannel0, uv + vec2(x, y) / iResolution.xy).r
 
-            float random()
-            {
-              return fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453);  
-            }
-
-            vec4 get_pixel(float x_offset, float y_offset)
-            {
-              vec2 gravity = vec2(0.0, 0.001);
-              return texture(self, gravity + (gl_FragCoord.xy / resolution.xy) + (vec2(x_offset, y_offset) / resolution.xy));
-            }
-
-            float step_simulation()
-            {
-              float val = get_pixel(0.0, 0.0).r;
-                
-                val += random()*val*0.15; // errosion
-                
-                val = get_pixel(
-                  sin(get_pixel(val, 0.0).r  - get_pixel(-val, 0.0) + pi).r  * val * 0.4, 
-                    cos(get_pixel(0.0, -val).r - get_pixel(0.0 , val) - pi2).r * val * 0.4
-                ).r;
-
-                if (mouse.z > 0.0) 
-                  val += smoothstep(length(resolution.xy)/10.0, 0.5, length(mouse.xy - gl_FragCoord.xy));
-                
-                val *= 1.001;
-                
-                return val;
-            }
-
-            void main()
+            void mainImage(out vec4 out_color, in vec2 coordinates)
             {    
-                float val = step_simulation();
-            
-                if(frame == 0)
-                    val = 
-                      random()*length(resolution.xy)/100.0 + 
-                      smoothstep(length(resolution.xy)/2.0, 0.5, length(resolution.xy * 0.5 - gl_FragCoord.xy))*25.0;
-                            
-                gl_FragColor.r = val;
+                vec2 uv = coordinates.xy / iResolution.xy;
+                
+                float v = PIXEL(0.0, 0.0);
+                v = PIXEL(
+                    sin(PIXEL(v, 0.0)  - PIXEL(-v, 0.0) + 3.1415) * v * 0.4, 
+                    cos(PIXEL(0.0, -v) - PIXEL(0.0 , v) - 1.57) * v * 0.4
+                );
+                v += pow(FFT(pow(v*0.1, 1.5) * 0.25) * 1.5, 3.0);
+                v -= pow(length(texture(video_tex, uv)) + 0.05, 3.0) * 0.08;
+                v *= 0.925 + FFT(v)*0.1;
+                
+                out_color.r = v;
             }
+
+            void main() { mainImage(gl_FragColor, gl_FragCoord.xy); }
           `}
           shade={`
-            void main() {
-              vec2 uv = gl_FragCoord.xy / resolution;
-
-              float val = texture2D(self, uv).r;
-              
-              vec4 color = pow(vec4(cos(val), tan(val), sin(val), 1.0) * 0.5 + 0.5, vec4(0.5));
-        
-              vec3 e = vec3(vec2(1.0)/resolution.xy,0.0);
-              float p10 = texture(self, uv-e.zy).x;
-              float p01 = texture(self, uv-e.xz).x;
-              float p21 = texture(self, uv+e.xz).x;
-              float p12 = texture(self, uv+e.zy).x;
-                  
-              vec3 grad = normalize(vec3(p21 - p01, p12 - p10, 1.));
-              vec3 light = normalize(vec3(.2,-.25,.7));
-              float diffuse = dot(grad,light);
-              float spec = pow(max(0.,-reflect(light,grad).z),32.0);
-              
-              gl_FragColor = (color * diffuse) + spec;
-              
-              gl_FragColor.a = 1.0; 
-            }          
-          `}
-        />
-        <Simulation 
-          width={document.documentElement.clientWidth} 
-          height={document.documentElement.clientHeight} 
-          simulation={`
-            const float TEMPERATURE = 2.0;
-            const float RADIUS = 1.33;
-
-            const float PI = 3.14159265358979323846264338327950288419716939937510582097494459230781640;
-
-            float random()
+            void mainImage( out vec4 out_color, in vec2 coordinates )
             {
-              return fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453);  
-            }
-
-            float get_average(vec2 uv, float size)
-            {
-                const float points = 14.0;
-                const float Start = 2.0 / points;
-                vec2 scale = (RADIUS * 5.0 / resolution.xy) + size;
-
-                float res = texture(self, uv).r;
-
-                for (float point = 0.0; point < points; point++)
-                {
-                    float r = (PI * 2.0 * (1.0 / points)) * (point + Start);
-                    res += texture(self, uv + vec2(sin(r), cos(r)) * scale).r;
-                }
-
-                res /= points;
-
-                return res;
-            }
-
-            void main()
-            {
-                vec2 uv = gl_FragCoord.xy/resolution.xy;
-                
-                vec3 noise = texture(noise_tex, time*0.001 + uv*0.015*0.25).rgb;
-                float height = (noise.b*2.0-1.0) * 0.25;
-                
-                {	
-                    vec2 muv = noise.xy;
+                vec2 uv = coordinates.xy/iResolution.xy;
+                float v = texture(iChannel0, uv).r * 1.5;
                     
-                    vec2 p = uv - muv;
-                    float r = length(p);
-                    float a = atan(p.y, p.x);
-                    r = pow(r*2.0, 1.0 + height * 0.05);
-                    p = r * vec2(cos(a)*0.5, sin(a)*0.5);
-
-                    uv = p + muv;
-                }
-                                    
-                //uv.y += 0.00025;
-
-                if (frame == 0)
-                {
-                    gl_FragColor.r = random();
-                    return;
-                }
+                vec3 color = pow(vec3(cos(v), tan(v), sin(v)) * 0.5 + 0.5, vec3(0.5));
+                vec3 e = vec3(vec2(1.0) / iResolution.xy, 0.0);
+                vec3 grad = normalize(vec3(
+                    texture(iChannel0, uv + e.xz).x - texture(iChannel0, uv - e.xz).x, 
+                    texture(iChannel0, uv + e.zy).x - texture(iChannel0, uv - e.zy).x, 1.0));
+                vec3 light = vec3(0.26, -0.32, 0.91);
+                float diffuse = dot(grad, light);
+                float spec = pow(max(0.0, -reflect(light, grad).z), 32.0);
                 
-                float val = texture(self, uv).r;
-                float avg = get_average(uv, height*-0.005);
-                gl_FragColor.r = sin(avg * (2.3 + TEMPERATURE + height*2.0)) + sin(val);
-              
-                if (mouse.z > 0.0) 
-                    gl_FragColor.r += smoothstep(length(resolution.xy)/5.0, 0.5, length(mouse.xy - gl_FragCoord.xy)) * sin(time*10.0);
-            }  
-          `}
-          shade={`
-            void main() {
-              float v = texture(self, gl_FragCoord.xy/resolution.xy).r;
-              v *= 0.5;
-              v = v * 0.5 + 0.5;
-              v = clamp(v, 0.0, 1.0);
-              
-              gl_FragColor.r = v*1.25;
-              gl_FragColor.g = sin(v*0.1)*5.0+v;
-              gl_FragColor.b = pow(v*5.0, 0.5)*0.26;
-              gl_FragColor.a = 1.0;
-            }          
+                out_color.rgb = (color * diffuse) + spec;
+                out_color.a = 1.0;
+            }
+
+            void main() { mainImage(gl_FragColor, gl_FragCoord.xy); }
           `}
         />
       </div>

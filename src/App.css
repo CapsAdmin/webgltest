@@ -1,2 +1,12 @@
 body {
+    overflow: hidden;
+}
+
+App {
+    overflow-y: scroll;
+}
+
+video {
+    position: absolute;
+    bottom: 0px;
 }
