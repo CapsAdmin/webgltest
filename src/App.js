@@ -18,14 +18,17 @@ class GLRenderer extends React.Component {
     requestAnimationFrame((time) => { this._Draw(this.gl, time) });
 
     this.Initialize(this.gl)
+
+    window.addEventListener('resize', () => {
+      this.Initialize(this.gl)
+    })
   }
   
   render() {
-    return <canvas ref="canvas" width={this.props.width} height={this.props.height}/>
+    return <canvas ref="canvas"/>
   }
 
   _Draw (gl, time) {
-    // fps limit here
     this.Draw(gl, time);
     requestAnimationFrame((time) => { this._Draw(gl, time) });
   }
@@ -37,6 +40,9 @@ class Simulation extends GLRenderer {
     this.frame = 0
   }
   Initialize(gl) {
+    this.refs.canvas.width = document.documentElement.clientWidth
+    this.refs.canvas.height = document.documentElement.clientHeight
+
     this.rectangle = twgl.createBufferInfoFromArrays(gl, {
       position: [-1, -1, 0, 1, -1, 0, -1, 1, 0, -1, 1, 0, 1, -1, 0, 1, 1, 0],
     });
@@ -125,11 +131,11 @@ class Simulation extends GLRenderer {
     let self = this;
 
     function setupVideo(url) {
-      const video = document.createElement('video')
+      const video = document.createElement("video")
 
       document.body.appendChild(video)
 
-     let source = context.createMediaElementSource(video);
+      let source = context.createMediaElementSource(video);
 
       source.connect(analyser)
       analyser.connect(context.destination)
@@ -161,7 +167,7 @@ class Simulation extends GLRenderer {
           
       function checkReady() {
         video.setAttribute("controls", "controls")
-        video.height = 0
+        video.height = document.documentElement.clientHeight
         video.width = document.documentElement.clientWidth
 
         if (playing && timeupdate) {
@@ -176,6 +182,7 @@ class Simulation extends GLRenderer {
     this.video = setupVideo(video_source);
     this.video_texture = twgl.createTexture(gl, {
       min: gl.LINEAR,
+      mag: gl.LINEAR,
       wrap: gl.REPEAT,
     })
   }
@@ -313,10 +320,8 @@ class Simulation extends GLRenderer {
 class App extends Component {
   render() {
     return (
-      <div className="App"> 
+      <div className="App">       
        <Simulation 
-          width={document.documentElement.clientWidth} 
-          height={document.documentElement.clientHeight} 
           simulation={`
             #define FFT(f) texture(fft_tex, vec2(f, 0.0)).x
             #define PIXEL(x, y) texture(iChannel0, uv + vec2(x, y) / iResolution.xy).r
@@ -331,7 +336,7 @@ class App extends Component {
                     cos(PIXEL(0.0, -v) - PIXEL(0.0 , v) - 1.57) * v * 0.4
                 );
                 v += pow(FFT(pow(v*0.1, 1.5) * 0.25) * 1.5, 3.0);
-                v -= pow(length(texture(video_tex, uv)) + 0.05, 3.0) * 0.08;
+                v -= pow(length(texture(video_tex, uv * vec2(1.0, -1.0))) + 0.05, 3.0) * 0.08;
                 v *= 0.925 + FFT(v)*0.1;
                 
                 out_color.r = v;

@@ -8,5 +8,11 @@ App {
 
 video {
     position: absolute;
+    height: 45px;
     bottom: 0px;
+    opacity: 0;
+}
+
+video:hover {
+    opacity: 1;
 }
