@@ -106,40 +106,49 @@ class Simulation extends GLRenderer {
       src: noise_image,
     })
 
-    this.uniforms = {}
-
-    this.SetupMouse(gl)
-
-    let context = new AudioContext()
-    
-    let analyser = context.createAnalyser()
-    //analyser.minDecibels = -90;
-    //analyser.maxDecibels = -10;
-    analyser.smoothingTimeConstant = 1.0;
-    analyser.fftSize =2048
-
-    var bufferLength = analyser.frequencyBinCount
-    this.fftArray = new Uint8Array(bufferLength)
-
     this.fft_texture = twgl.createTexture(gl, {
       min: gl.LINEAR,
       wrap: gl.REPEAT,
     })
     
-    this.audioAnalyser = analyser
+    this.video_texture = twgl.createTexture(gl, {
+      min: gl.LINEAR,
+      mag: gl.LINEAR,
+      wrap: gl.REPEAT,
+    })
 
-    let self = this;
+    this.uniforms = {}
+    
+    this.SetupMouse(gl)
 
-    function setupVideo(url) {
-      const video = document.createElement("video")
+    if (!this.audioContext)
+    {
+      let context = new AudioContext()
+      
+      let analyser = context.createAnalyser()
+      //analyser.minDecibels = -90;
+      //analyser.maxDecibels = -10;
+      analyser.smoothingTimeConstant = 1.0;
+      analyser.fftSize =2048
+
+      var bufferLength = analyser.frequencyBinCount
+      this.fftArray = new Uint8Array(bufferLength)
+      
+      this.audioAnalyser = analyser
+      this.audioContext = context
+    }
+
+    if (!this.video) 
+    {
+      let video = document.createElement("video")
 
       document.body.appendChild(video)
 
-      let source = context.createMediaElementSource(video);
+      let source = this.audioContext.createMediaElementSource(video);
 
-      source.connect(analyser)
-      analyser.connect(context.destination)
-      
+      source.connect(this.audioAnalyser)
+      this.audioAnalyser.connect(this.audioContext.destination)
+    
 
       var playing = false;
       var timeupdate = false;
@@ -147,24 +156,8 @@ class Simulation extends GLRenderer {
       video.autoplay = true;
       video.muted = false;
       video.loop = true;
-    
-      // Waiting for these 2 events ensures
-      // there is data in the video
-    
-      video.addEventListener('playing', function() {
-         playing = true;
-         checkReady();
-      }, true);
-    
-      video.addEventListener('timeupdate', function() {
-         timeupdate = true;
-         checkReady();
-      }, true);
-    
-      video.src = url;
-      video.play();
-      video.volume = 1;
-          
+     
+      let self = this;
       function checkReady() {
         video.setAttribute("controls", "controls")
         video.height = document.documentElement.clientHeight
@@ -175,16 +168,22 @@ class Simulation extends GLRenderer {
         }
       }
     
-      return video;
-    }
+      video.addEventListener('playing', function() {
+          playing = true;
+          checkReady();
+      }, true);
     
-
-    this.video = setupVideo(video_source);
-    this.video_texture = twgl.createTexture(gl, {
-      min: gl.LINEAR,
-      mag: gl.LINEAR,
-      wrap: gl.REPEAT,
-    })
+      video.addEventListener('timeupdate', function() {
+          timeupdate = true;
+          checkReady();
+      }, true);
+    
+      video.src = video_source;
+      video.play();
+      video.volume = 1;
+            
+      this.video = video;
+    }
   }
 
   UpdateTexture() {
